@@ -1,0 +1,136 @@
+name: Build NOVOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '22'
+  PROJECT_DIR: 'NOVOS'
+
+jobs:
+  desktop:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            command: npm run desktop:windows
+            file: 'release/NOVOS Setup 1.0.0.exe'
+            output: NOVOS-Setup.exe
+          - name: Linux
+            os: ubuntu-latest
+            command: npm run desktop:linux
+            file: release/NOVOS-1.0.0.AppImage
+            output: NOVOS.AppImage
+          - name: macOS
+            os: macos-latest
+            command: npm run desktop:mac
+            file: release/NOVOS-1.0.0.dmg
+            output: NOVOS.dmg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Extract NOVOS project
+        shell: bash
+        run: unzip -q NOVOS-upload-ready.zip
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install
+      - name: Build desktop app
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: ${{ matrix.command }}
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          test -f "${PROJECT_DIR}/${{ matrix.file }}"
+          cp "${PROJECT_DIR}/${{ matrix.file }}" "${{ matrix.output }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: ${{ matrix.output }}
+
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Extract NOVOS project
+        shell: bash
+        run: unzip -q NOVOS-upload-ready.zip
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install
+      - name: Install Capacitor Android
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+      - name: Create Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npx cap add android
+      - name: Sync Android
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npx cap sync android
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: ./gradlew assembleDebug
+      - name: Prepare APK
+        run: cp "${PROJECT_DIR}/android/app/build/outputs/apk/debug/app-debug.apk" NOVOS.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOVOS.apk
+          path: NOVOS.apk
+
+  ios:
+    name: Build unsigned iOS test app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Extract NOVOS project
+        shell: bash
+        run: unzip -q NOVOS-upload-ready.zip
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install
+      - name: Install Capacitor iOS
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install @capacitor/core @capacitor/cli @capacitor/ios
+      - name: Create iOS project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npx cap add ios
+      - name: Sync iOS
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npx cap sync ios
+      - name: Build unsigned simulator app
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Release -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Archive
+        shell: bash
+        run: |
+          cd "${PROJECT_DIR}/ios/build/Build/Products/Release-iphonesimulator"
+          zip -qr "$GITHUB_WORKSPACE/NOVOS-iOS-unsigned.zip" App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOVOS-iOS-unsigned.zip
+          path: NOVOS-iOS-unsigned.zip
